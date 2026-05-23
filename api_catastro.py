@@ -6,9 +6,11 @@ import os
 
 app = FastAPI()
 
+
 @app.get("/")
 def inicio():
     return {"mensaje": "API OFV funcionando"}
+
 
 @app.get("/generar-dxf")
 def generar_dxf(
@@ -18,14 +20,13 @@ def generar_dxf(
     nombre_via: str,
     numero: str
 ):
-
     url_direccion = "https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCallejero.asmx/Consulta_DNPLOC"
 
     params_direccion = {
-        "Provincia": provincia,
-        "Municipio": municipio,
-        "Sigla": tipo_via,
-        "Calle": nombre_via,
+        "Provincia": provincia.upper(),
+        "Municipio": municipio.upper(),
+        "Sigla": tipo_via.upper(),
+        "Calle": nombre_via.upper(),
         "Numero": numero,
         "Bloque": "",
         "Escalera": "",
@@ -35,15 +36,33 @@ def generar_dxf(
 
     respuesta = requests.get(url_direccion, params=params_direccion)
 
-    root = ET.fromstring(respuesta.content)
+    if respuesta.status_code != 200:
+        return {
+            "error": "Error consultando Catastro",
+            "status_code": respuesta.status_code,
+            "respuesta": respuesta.text[:500]
+        }
+
+    try:
+        root = ET.fromstring(respuesta.content)
+    except ET.ParseError:
+        return {
+            "error": "Catastro no ha devuelto XML válido",
+            "respuesta": respuesta.text[:1000]
+        }
 
     ns = {"cat": "http://www.catastro.meh.es/"}
 
     pc1 = root.find(".//cat:pc1", ns)
     pc2 = root.find(".//cat:pc2", ns)
+    direccion = root.find(".//cat:ldt", ns)
+    uso = root.find(".//cat:luso", ns)
 
     if pc1 is None or pc2 is None:
-        return {"error": "Referencia catastral no encontrada"}
+        return {
+            "error": "Referencia catastral no encontrada",
+            "respuesta_catastro": respuesta.text[:1000]
+        }
 
     refcat = pc1.text + pc2.text
 
@@ -60,20 +79,34 @@ def generar_dxf(
 
     respuesta_parcela = requests.get(url_parcela, params=params_parcela)
 
-    root_parcela = ET.fromstring(respuesta_parcela.content)
+    if respuesta_parcela.status_code != 200:
+        return {
+            "error": "Error consultando geometría INSPIRE",
+            "status_code": respuesta_parcela.status_code,
+            "respuesta": respuesta_parcela.text[:500]
+        }
+
+    try:
+        root_parcela = ET.fromstring(respuesta_parcela.content)
+    except ET.ParseError:
+        return {
+            "error": "INSPIRE no ha devuelto XML válido",
+            "respuesta": respuesta_parcela.text[:1000]
+        }
 
     coords_text = None
+    area = None
 
     for elem in root_parcela.iter():
         if elem.tag.endswith("posList"):
             coords_text = elem.text
-            break
+        if elem.tag.endswith("areaValue"):
+            area = elem.text
 
     if coords_text is None:
         return {"error": "Geometría no encontrada"}
 
     valores = coords_text.split()
-
     puntos = []
 
     for i in range(0, len(valores), 2):
@@ -82,10 +115,10 @@ def generar_dxf(
         puntos.append((x, y))
 
     doc = ezdxf.new("R2010")
-
     msp = doc.modelspace()
 
-    doc.layers.add("PARCELA_CATASTRAL")
+    if "PARCELA_CATASTRAL" not in doc.layers:
+        doc.layers.add("PARCELA_CATASTRAL")
 
     msp.add_lwpolyline(
         puntos,
@@ -93,12 +126,13 @@ def generar_dxf(
         dxfattribs={"layer": "PARCELA_CATASTRAL"}
     )
 
-    import os
     nombre_archivo = os.path.join("/tmp", f"parcela_{refcat}.dxf")
-
     doc.saveas(nombre_archivo)
 
     return {
         "referencia_catastral": refcat,
+        "direccion": direccion.text if direccion is not None else None,
+        "uso": uso.text if uso is not None else None,
+        "superficie_parcela_m2": area,
         "archivo_dxf": nombre_archivo
     }

@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi.responses import FileResponse
 import requests
 import xml.etree.ElementTree as ET
 import ezdxf
@@ -147,10 +147,8 @@ def generar_dxf(
 
     doc.saveas(nombre_archivo)
 
-    return {
-        "referencia_catastral": refcat,
-        "direccion": direccion.text if direccion is not None else None,
-        "uso": uso.text if uso is not None else None,
-        "superficie_parcela_m2": area,
-        "archivo_dxf": nombre_archivo
-    }
+    return FileResponse(
+        nombre_archivo,
+        media_type="application/dxf",
+        filename=f"parcela_{refcat}.dxf"
+    )

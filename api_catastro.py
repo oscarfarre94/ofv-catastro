@@ -34,7 +34,17 @@ def generar_dxf(
         "Puerta": ""
     }
 
-    respuesta = requests.get(url_direccion, params=params_direccion)
+    headers = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8"
+}
+
+respuesta = requests.get(
+    url_direccion,
+    params=params_direccion,
+    headers=headers,
+    timeout=30
+)
 
     if respuesta.status_code != 200:
         return {
@@ -77,7 +87,12 @@ def generar_dxf(
         "srsname": "EPSG::25831"
     }
 
-    respuesta_parcela = requests.get(url_parcela, params=params_parcela)
+    respuesta_parcela = requests.get(
+    url_parcela,
+    params=params_parcela,
+    headers=headers,
+    timeout=30
+)
 
     if respuesta_parcela.status_code != 200:
         return {

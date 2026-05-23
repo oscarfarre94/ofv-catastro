@@ -2,6 +2,7 @@ from fastapi import FastAPI
 import requests
 import xml.etree.ElementTree as ET
 import ezdxf
+import os
 
 app = FastAPI()
 
@@ -92,7 +93,8 @@ def generar_dxf(
         dxfattribs={"layer": "PARCELA_CATASTRAL"}
     )
 
-    nombre_archivo = f"parcela_{refcat}.dxf"
+    import os
+    nombre_archivo = os.path.join("/tmp", f"parcela_{refcat}.dxf")
 
     doc.saveas(nombre_archivo)
 

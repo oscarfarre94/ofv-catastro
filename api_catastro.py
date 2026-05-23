@@ -1,3 +1,4 @@
+from fastapi import FastAPI
 from fastapi.responses import FileResponse
 import requests
 import xml.etree.ElementTree as ET
@@ -66,8 +67,6 @@ def generar_dxf(
 
     pc1 = root.find(".//cat:pc1", ns)
     pc2 = root.find(".//cat:pc2", ns)
-    direccion = root.find(".//cat:ldt", ns)
-    uso = root.find(".//cat:luso", ns)
 
     if pc1 is None or pc2 is None:
         return {
@@ -111,14 +110,10 @@ def generar_dxf(
         }
 
     coords_text = None
-    area = None
 
     for elem in root_parcela.iter():
         if elem.tag.endswith("posList"):
             coords_text = elem.text
-
-        if elem.tag.endswith("areaValue"):
-            area = elem.text
 
     if coords_text is None:
         return {"error": "Geometría no encontrada"}
@@ -143,7 +138,10 @@ def generar_dxf(
         dxfattribs={"layer": "PARCELA_CATASTRAL"}
     )
 
-    nombre_archivo = os.path.join("/tmp", f"parcela_{refcat}.dxf")
+    nombre_archivo = os.path.join(
+        "/tmp",
+        f"parcela_{refcat}.dxf"
+    )
 
     doc.saveas(nombre_archivo)
 

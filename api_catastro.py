@@ -20,6 +20,12 @@ def generar_dxf(
     nombre_via: str,
     numero: str
 ):
+
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8"
+    }
+
     url_direccion = "https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCallejero.asmx/Consulta_DNPLOC"
 
     params_direccion = {
@@ -34,17 +40,12 @@ def generar_dxf(
         "Puerta": ""
     }
 
-    headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8"
-}
-
-respuesta = requests.get(
-    url_direccion,
-    params=params_direccion,
-    headers=headers,
-    timeout=30
-)
+    respuesta = requests.get(
+        url_direccion,
+        params=params_direccion,
+        headers=headers,
+        timeout=30
+    )
 
     if respuesta.status_code != 200:
         return {
@@ -88,11 +89,11 @@ respuesta = requests.get(
     }
 
     respuesta_parcela = requests.get(
-    url_parcela,
-    params=params_parcela,
-    headers=headers,
-    timeout=30
-)
+        url_parcela,
+        params=params_parcela,
+        headers=headers,
+        timeout=30
+    )
 
     if respuesta_parcela.status_code != 200:
         return {
@@ -115,6 +116,7 @@ respuesta = requests.get(
     for elem in root_parcela.iter():
         if elem.tag.endswith("posList"):
             coords_text = elem.text
+
         if elem.tag.endswith("areaValue"):
             area = elem.text
 
@@ -142,6 +144,7 @@ respuesta = requests.get(
     )
 
     nombre_archivo = os.path.join("/tmp", f"parcela_{refcat}.dxf")
+
     doc.saveas(nombre_archivo)
 
     return {

@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 import requests
 import xml.etree.ElementTree as ET
 import ezdxf
@@ -7,29 +7,23 @@ import os
 
 app = FastAPI()
 
+BASE_URL = "https://ofv-catastro.onrender.com"
+
 
 @app.get("/")
 def inicio():
-    return {"mensaje": "API OFV funcionando"}
+    return {"mensaje": "API Catastro OFV funcionando"}
 
 
-@app.get("/generar-dxf")
-def generar_dxf(
-    provincia: str,
-    municipio: str,
-    tipo_via: str,
-    nombre_via: str,
-    numero: str
-):
-
+def obtener_referencia(provincia, municipio, tipo_via, nombre_via, numero):
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8"
     }
 
-    url_direccion = "https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCallejero.asmx/Consulta_DNPLOC"
+    url = "https://ovc.catastro.meh.es/ovcservweb/OVCSWLocalizacionRC/OVCCallejero.asmx/Consulta_DNPLOC"
 
-    params_direccion = {
+    params = {
         "Provincia": provincia.upper(),
         "Municipio": municipio.upper(),
         "Sigla": tipo_via.upper(),
@@ -41,27 +35,12 @@ def generar_dxf(
         "Puerta": ""
     }
 
-    respuesta = requests.get(
-        url_direccion,
-        params=params_direccion,
-        headers=headers,
-        timeout=30
-    )
+    respuesta = requests.get(url, params=params, headers=headers, timeout=30)
 
     if respuesta.status_code != 200:
-        return {
-            "error": "Error consultando Catastro",
-            "status_code": respuesta.status_code,
-            "respuesta": respuesta.text[:500]
-        }
+        return None
 
-    try:
-        root = ET.fromstring(respuesta.content)
-    except ET.ParseError:
-        return {
-            "error": "Catastro no ha devuelto XML válido",
-            "respuesta": respuesta.text[:1000]
-        }
+    root = ET.fromstring(respuesta.content)
 
     ns = {"cat": "http://www.catastro.meh.es/"}
 
@@ -69,12 +48,16 @@ def generar_dxf(
     pc2 = root.find(".//cat:pc2", ns)
 
     if pc1 is None or pc2 is None:
-        return {
-            "error": "Referencia catastral no encontrada",
-            "respuesta_catastro": respuesta.text[:1000]
-        }
+        return None
 
-    refcat = pc1.text + pc2.text
+    return pc1.text + pc2.text
+
+
+def crear_dxf(refcat):
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8"
+    }
 
     url_parcela = "https://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx"
 
@@ -87,44 +70,29 @@ def generar_dxf(
         "srsname": "EPSG::25831"
     }
 
-    respuesta_parcela = requests.get(
-        url_parcela,
-        params=params_parcela,
-        headers=headers,
-        timeout=30
-    )
-
-    if respuesta_parcela.status_code != 200:
-        return {
-            "error": "Error consultando geometría INSPIRE",
-            "status_code": respuesta_parcela.status_code,
-            "respuesta": respuesta_parcela.text[:500]
-        }
-
-    try:
-        root_parcela = ET.fromstring(respuesta_parcela.content)
-    except ET.ParseError:
-        return {
-            "error": "INSPIRE no ha devuelto XML válido",
-            "respuesta": respuesta_parcela.text[:1000]
-        }
+    respuesta = requests.get(url_parcela, params=params_parcela, headers=headers, timeout=30)
+    root = ET.fromstring(respuesta.content)
 
     coords_text = None
+    area = None
 
-    for elem in root_parcela.iter():
+    for elem in root.iter():
         if elem.tag.endswith("posList"):
             coords_text = elem.text
+        if elem.tag.endswith("areaValue"):
+            area = elem.text
 
     if coords_text is None:
-        return {"error": "Geometría no encontrada"}
+        return None, None
 
     valores = coords_text.split()
     puntos = []
 
     for i in range(0, len(valores), 2):
-        x = float(valores[i])
-        y = float(valores[i + 1])
-        puntos.append((x, y))
+        puntos.append((float(valores[i]), float(valores[i + 1])))
+
+    nombre_archivo = f"parcela_{refcat}.dxf"
+    ruta_archivo = os.path.join("/tmp", nombre_archivo)
 
     doc = ezdxf.new("R2010")
     msp = doc.modelspace()
@@ -138,15 +106,85 @@ def generar_dxf(
         dxfattribs={"layer": "PARCELA_CATASTRAL"}
     )
 
-    nombre_archivo = os.path.join(
-        "/tmp",
-        f"parcela_{refcat}.dxf"
-    )
+    doc.saveas(ruta_archivo)
 
-    doc.saveas(nombre_archivo)
+    return ruta_archivo, area
+
+
+@app.get("/generar-dxf")
+def generar_dxf(
+    provincia: str,
+    municipio: str,
+    tipo_via: str,
+    nombre_via: str,
+    numero: str
+):
+    refcat = obtener_referencia(provincia, municipio, tipo_via, nombre_via, numero)
+
+    if refcat is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Referencia catastral no encontrada"}
+        )
+
+    ruta_archivo, area = crear_dxf(refcat)
+
+    if ruta_archivo is None:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "No se pudo generar el DXF"}
+        )
 
     return FileResponse(
-        nombre_archivo,
-        media_type="application/dxf",
+        path=ruta_archivo,
+        media_type="application/octet-stream",
+        filename=f"parcela_{refcat}.dxf"
+    )
+
+
+@app.get("/generar-dxf-info")
+def generar_dxf_info(
+    provincia: str,
+    municipio: str,
+    tipo_via: str,
+    nombre_via: str,
+    numero: str
+):
+    refcat = obtener_referencia(provincia, municipio, tipo_via, nombre_via, numero)
+
+    if refcat is None:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "Referencia catastral no encontrada"}
+        )
+
+    ruta_archivo, area = crear_dxf(refcat)
+
+    if ruta_archivo is None:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "No se pudo generar el DXF"}
+        )
+
+    return {
+        "referencia_catastral": refcat,
+        "superficie_parcela_m2": area,
+        "download_url": f"{BASE_URL}/descargar-dxf/{refcat}"
+    }
+
+
+@app.get("/descargar-dxf/{refcat}")
+def descargar_dxf(refcat: str):
+    ruta_archivo, area = crear_dxf(refcat)
+
+    if ruta_archivo is None:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "No se pudo generar el DXF"}
+        )
+
+    return FileResponse(
+        path=ruta_archivo,
+        media_type="application/octet-stream",
         filename=f"parcela_{refcat}.dxf"
     )

@@ -40,7 +40,10 @@ def obtener_referencia(provincia, municipio, tipo_via, nombre_via, numero):
     if respuesta.status_code != 200:
         return None
 
-    root = ET.fromstring(respuesta.content)
+    try:
+        root = ET.fromstring(respuesta.content)
+    except ET.ParseError:
+        return None
 
     ns = {"cat": "http://www.catastro.meh.es/"}
 
@@ -53,11 +56,20 @@ def obtener_referencia(provincia, municipio, tipo_via, nombre_via, numero):
     return pc1.text + pc2.text
 
 
+def limpiar_refcat(refcat):
+    refcat = refcat.strip().upper().replace(" ", "").replace("-", "")
+    if len(refcat) >= 14:
+        return refcat[:14]
+    return refcat
+
+
 def crear_dxf(refcat):
     headers = {
         "User-Agent": "Mozilla/5.0",
         "Accept": "application/xml,text/xml;q=0.9,*/*;q=0.8"
     }
+
+    refcat = limpiar_refcat(refcat)
 
     url_parcela = "https://ovc.catastro.meh.es/INSPIRE/wfsCP.aspx"
 
@@ -71,7 +83,14 @@ def crear_dxf(refcat):
     }
 
     respuesta = requests.get(url_parcela, params=params_parcela, headers=headers, timeout=30)
-    root = ET.fromstring(respuesta.content)
+
+    if respuesta.status_code != 200:
+        return None, None
+
+    try:
+        root = ET.fromstring(respuesta.content)
+    except ET.ParseError:
+        return None, None
 
     coords_text = None
     area = None
@@ -113,21 +132,39 @@ def crear_dxf(refcat):
 
 @app.get("/generar-dxf")
 def generar_dxf(
-    provincia: str,
-    municipio: str,
-    tipo_via: str,
-    nombre_via: str,
-    numero: str
+    provincia: str = None,
+    municipio: str = None,
+    tipo_via: str = None,
+    nombre_via: str = None,
+    numero: str = None,
+    refcat: str = None
 ):
-    refcat = obtener_referencia(provincia, municipio, tipo_via, nombre_via, numero)
+    if refcat:
+        referencia = limpiar_refcat(refcat)
+    else:
+        if not all([provincia, municipio, tipo_via, nombre_via, numero]):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Debes indicar refcat o bien provincia, municipio, tipo_via, nombre_via y numero"
+                }
+            )
 
-    if refcat is None:
+        referencia = obtener_referencia(
+            provincia,
+            municipio,
+            tipo_via,
+            nombre_via,
+            numero
+        )
+
+    if referencia is None:
         return JSONResponse(
             status_code=404,
             content={"error": "Referencia catastral no encontrada"}
         )
 
-    ruta_archivo, area = crear_dxf(refcat)
+    ruta_archivo, area = crear_dxf(referencia)
 
     if ruta_archivo is None:
         return JSONResponse(
@@ -138,27 +175,45 @@ def generar_dxf(
     return FileResponse(
         path=ruta_archivo,
         media_type="application/octet-stream",
-        filename=f"parcela_{refcat}.dxf"
+        filename=f"parcela_{referencia}.dxf"
     )
 
 
 @app.get("/generar-dxf-info")
 def generar_dxf_info(
-    provincia: str,
-    municipio: str,
-    tipo_via: str,
-    nombre_via: str,
-    numero: str
+    provincia: str = None,
+    municipio: str = None,
+    tipo_via: str = None,
+    nombre_via: str = None,
+    numero: str = None,
+    refcat: str = None
 ):
-    refcat = obtener_referencia(provincia, municipio, tipo_via, nombre_via, numero)
+    if refcat:
+        referencia = limpiar_refcat(refcat)
+    else:
+        if not all([provincia, municipio, tipo_via, nombre_via, numero]):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "Debes indicar refcat o bien provincia, municipio, tipo_via, nombre_via y numero"
+                }
+            )
 
-    if refcat is None:
+        referencia = obtener_referencia(
+            provincia,
+            municipio,
+            tipo_via,
+            nombre_via,
+            numero
+        )
+
+    if referencia is None:
         return JSONResponse(
             status_code=404,
             content={"error": "Referencia catastral no encontrada"}
         )
 
-    ruta_archivo, area = crear_dxf(refcat)
+    ruta_archivo, area = crear_dxf(referencia)
 
     if ruta_archivo is None:
         return JSONResponse(
@@ -167,15 +222,17 @@ def generar_dxf_info(
         )
 
     return {
-        "referencia_catastral": refcat,
+        "referencia_catastral": referencia,
         "superficie_parcela_m2": area,
-        "download_url": f"{BASE_URL}/descargar-dxf/{refcat}"
+        "download_url": f"{BASE_URL}/descargar-dxf/{referencia}"
     }
 
 
 @app.get("/descargar-dxf/{refcat}")
 def descargar_dxf(refcat: str):
-    ruta_archivo, area = crear_dxf(refcat)
+    referencia = limpiar_refcat(refcat)
+
+    ruta_archivo, area = crear_dxf(referencia)
 
     if ruta_archivo is None:
         return JSONResponse(
@@ -186,5 +243,5 @@ def descargar_dxf(refcat: str):
     return FileResponse(
         path=ruta_archivo,
         media_type="application/octet-stream",
-        filename=f"parcela_{refcat}.dxf"
+        filename=f"parcela_{referencia}.dxf"
     )
